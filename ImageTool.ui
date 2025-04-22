@@ -63,24 +63,6 @@
         </property>
        </widget>
       </item>
-      <item>
-       <widget class="QScrollArea" name="thumbnailScroll">
-        <property name="widgetResizable">
-         <bool>true</bool>
-        </property>
-        <widget class="QWidget" name="thumbnailContainer">
-         <property name="geometry">
-          <rect>
-           <x>0</x>
-           <y>0</y>
-           <width>583</width>
-           <height>69</height>
-          </rect>
-         </property>
-         <layout class="QHBoxLayout" name="thumbnailLayout"/>
-        </widget>
-       </widget>
-      </item>
      </layout>
     </item>
     <item>
@@ -120,7 +102,7 @@
          <item>
           <widget class="QPushButton" name="compareButton">
            <property name="text">
-            <string>对比模式</string>
+            <string>检测</string>
            </property>
           </widget>
          </item>
@@ -140,16 +122,6 @@
         </property>
         <property name="viewMode">
          <enum>QListView::ListMode</enum>
-        </property>
-       </widget>
-      </item>
-      <item>
-       <widget class="QPushButton" name="actionButton">
-        <property name="text">
-         <string>执行操作</string>
-        </property>
-        <property name="menu" stdset="0">
-         <string>actionMenu</string>
         </property>
        </widget>
       </item>
