@@ -103,6 +103,10 @@ class MainApp(QMainWindow):
             "Images (*.png *.jpg *.jpeg *.bmp *.gif)"
         )
         if selected_files:
+            # 确保 "未分类" 分组存在且为列表
+            if "未分类" not in self.group_data or not isinstance(self.group_data["未分类"], list):
+                self.group_data["未分类"] = []
+
             # 将新图片添加到"未分类"分组
             self.group_data["未分类"].extend(selected_files)
             self.init_group_tree()  # 刷新分组显示

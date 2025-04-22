@@ -92,6 +92,16 @@
         </property>
         <layout class="QVBoxLayout" name="verticalLayout_3">
          <item>
+          <widget class="QLabel" name="thresholdLabel">
+           <property name="text">
+            <string>相似度阈值: 0.85</string>
+           </property>
+           <property name="alignment">
+            <set>Qt::AlignCenter</set>
+           </property>
+          </widget>
+         </item>
+         <item>
           <widget class="QSlider" name="thresholdSlider">
            <property name="minimum">
             <number>50</number>
@@ -104,16 +114,6 @@
            </property>
            <property name="orientation">
             <enum>Qt::Horizontal</enum>
-           </property>
-          </widget>
-         </item>
-         <item>
-          <widget class="QLabel" name="thresholdLabel">
-           <property name="text">
-            <string>相似度阈值: 0.85</string>
-           </property>
-           <property name="alignment">
-            <set>Qt::AlignCenter</set>
            </property>
           </widget>
          </item>
