@@ -2,6 +2,7 @@ from PyQt6.QtWidgets import QApplication, QMainWindow, QMessageBox, QFileDialog,
 from PyQt6.QtWidgets import QTreeWidgetItem, QMenu, QGraphicsScene  # 确保导入 QGraphicsScene
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QPixmap
+
 import os
 class UIManager:
     def __init__(self, main_app, similarity_algorithm):

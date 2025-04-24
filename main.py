@@ -22,6 +22,10 @@ class MainApp(QMainWindow):
         # 初始化分组数据
         self.group_data = {"未分类": []}
 
+        # 新增双阈值控制
+        self.coarse_threshold = 0.7  # 粗筛阈值默认值
+        self.fine_threshold = 0.6     # 细筛阈值默认值
+
         # 创建 GroupManager 实例
         self.group_manager = GroupManager(self, self.ui, self.group_data)
 
@@ -40,6 +44,7 @@ class MainApp(QMainWindow):
 
         # 初始化界面
         self.init_ui()
+
 
     def init_ui(self):
         """初始化界面"""
@@ -65,7 +70,7 @@ class MainApp(QMainWindow):
 
         # 连接信号与槽
         self.ui.thresholdSlider.valueChanged.connect(self.ui_manager.update_threshold)
-        self.ui.compareButton.clicked.connect(self.ui_manager.toggle_compare_mode)
+        #self.ui.compareButton.clicked.connect(self.ui_manager.toggle_compare_mode)
         self.ui.importButton.clicked.connect(self.image_manager.import_images)  # 调用 ImageManager 的方法
         #self.ui.similarityList.itemClicked.connect(self.display_preview)
 
@@ -80,6 +85,116 @@ class MainApp(QMainWindow):
         # 初始化分组树
         self.group_manager.init_group_tree()
 
+        # 添加算法选择下拉框
+        self.ui.algorithmComboBox = QtWidgets.QComboBox(self.ui.controlGroup)
+        self.ui.algorithmComboBox.addItems(["pHash", "SIFT", "Histogram", "Combined"])
+        self.ui.verticalLayout_3.insertWidget(0, self.ui.algorithmComboBox)
+
+
+
+
+        self.add_threshold_controls()
+
+                # 添加触发检测按钮
+        self.ui.detectButton = QtWidgets.QPushButton("开始检测", self.ui.controlGroup)
+        self.ui.verticalLayout_3.addWidget(self.ui.detectButton)
+        self.ui.detectButton.clicked.connect(self.start_similarity_detection)
+
+        # 监听算法选择变化
+        self.ui.algorithmComboBox.currentIndexChanged.connect(self.on_algorithm_changed)
+
+            # 调用算法切换逻辑，确保初始化时显示正确的控件
+        self.on_algorithm_changed()
+
+
+
+    def on_algorithm_changed(self):
+        """根据算法选择动态切换控件显示"""
+        algorithm = self.ui.algorithmComboBox.currentText().lower()
+        if algorithm == "combined":
+            # 显示粗粒度和细粒度阈值控件
+            self.coarseLabel.show()
+            self.coarseSlider.show()
+            self.fineLabel.show()
+            self.fineSlider.show()
+            # 隐藏单一阈值控件
+            self.ui.thresholdLabel.hide()
+            self.ui.thresholdSlider.hide()
+        else:
+            # 显示单一阈值控件
+            self.ui.thresholdLabel.show()
+            self.ui.thresholdSlider.show()
+            # 隐藏粗粒度和细粒度阈值控件
+            self.coarseLabel.hide()
+            self.coarseSlider.hide()
+            self.fineLabel.hide()
+            self.fineSlider.hide()
+
+
+
+    def add_threshold_controls(self):
+        """新增双阈值控制面板"""
+        # 粗粒度阈值
+        coarse_layout = QtWidgets.QHBoxLayout()
+        self.coarseLabel = QtWidgets.QLabel(f"粗筛阈值: {self.coarse_threshold:.2f}")
+        self.coarseSlider = QtWidgets.QSlider(Qt.Orientation.Horizontal)
+        self.coarseSlider.setRange(50, 95)  # 对应0.5-0.95
+        self.coarseSlider.setValue(int(self.coarse_threshold*100))
+        self.coarseSlider.valueChanged.connect(self.update_coarse_threshold)
+        coarse_layout.addWidget(self.coarseLabel)
+        coarse_layout.addWidget(self.coarseSlider)
+
+        # 细粒度阈值 
+        fine_layout = QtWidgets.QHBoxLayout()
+        self.fineLabel = QtWidgets.QLabel(f"细筛阈值: {self.fine_threshold:.2f}")
+        self.fineSlider = QtWidgets.QSlider(Qt.Orientation.Horizontal)
+        self.fineSlider.setRange(30, 80)    # 对应0.3-0.8
+        self.fineSlider.setValue(int(self.fine_threshold*100))
+        self.fineSlider.valueChanged.connect(self.update_fine_threshold)
+        fine_layout.addWidget(self.fineLabel)
+        fine_layout.addWidget(self.fineSlider)
+
+        # 添加到控制面板
+        self.ui.verticalLayout_3.addLayout(coarse_layout)
+        self.ui.verticalLayout_3.addLayout(fine_layout)
+
+    def update_coarse_threshold(self, value):
+        self.coarse_threshold = value / 100
+        self.coarseLabel.setText(f"粗筛阈值: {self.coarse_threshold:.2f}")
+
+    def update_fine_threshold(self, value):
+        self.fine_threshold = value / 100  # 正确：将整数转换为浮点数
+        self.fineLabel.setText(f"细筛阈值: {self.fine_threshold:.2f}")
+
+    def start_similarity_detection(self):
+        algorithm = self.ui.algorithmComboBox.currentText().lower()
+        all_images = []
+        for group_name, images in self.group_data.items():
+            all_images.extend(images)
+        
+        # 根据算法类型调用不同检测方法
+        if algorithm == "combined":
+            # 两阶段检测模式
+            similarity_results = self.similarity_algorithm.apply_combined_grouping(
+                all_images,
+                coarse_threshold=self.coarse_threshold,
+                fine_threshold=self.fine_threshold
+            )
+        else:
+            # 单算法模式（保持原有逻辑）
+            similarity_results = self.similarity_algorithm.apply_single_algorithm_grouping(
+                all_images, 
+                threshold=self.ui_manager.similarity_threshold,
+                algorithm=algorithm
+            )
+        
+        # 统一更新分组数据
+        self.group_data.clear()
+        for group_name, images in similarity_results.items():
+            self.group_data[group_name] = images
+        
+        # 带缩略图刷新的分组树更新
+        self.group_manager.init_group_tree()
 
 
 
