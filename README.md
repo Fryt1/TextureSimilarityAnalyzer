@@ -21,7 +21,7 @@
 
 ****
 
-**合使用的可能性**：三者可分别从哈希特征（全局结构）、关键点（局部几何）和颜色分布（全局色彩）三个维度互补。例如：
+**组合使用的可能性**：三者可分别从哈希特征（全局结构）、关键点（局部几何）和颜色分布（全局色彩）三个维度互补。例如：
 
 ---
 
@@ -39,7 +39,7 @@
 
 <h3 id="QGX6m">三、由上述敏感性和鲁棒性有Combined方案</h3>
 
-由于**SIFT**的性能相比**pHash**和**直方图算法**比较差，并且**pHash**和**直方图算法无法处理水印这种局部结构变化，所以使用分层判断方案**
+由于**SIFT**的性能相比**pHash**和**直方图算法**比较差，并且**pHash**和**直方图算法无法处理水印这种局部结构变化，所以使用分层判断方案，既可以加速SIFT算法也可以处理水印**
 
 <h4 id="g3nEB">第一步:使用pHash和直方图算法进行结构/全局颜色的粗粒度筛选</h4>
 
@@ -76,7 +76,7 @@ def _coarse_compare(self, base_features, target_features, threshold):
 
 ****
 
-<h5 id="wx0Hu">TODO:1.优化效率sift算法效率</h5>
+<h5 id="wx0Hu">TODO:1.继续优化效率sift算法效率</h5>
 
 
 
@@ -101,17 +101,53 @@ def _coarse_compare(self, base_features, target_features, threshold):
 - [x] 1.pHash(以图片结构判断图片相似)
 - [x] 2.SIFT(匹配局部结构特征，可以处理水印这类情况)
 - [x] 3.Histogram(依赖颜色分布的图片匹配算法)
-- [x] 4.Combined(组合pHash，SIFT，Histogram三种算法，以适应复杂情况)
+- [x] 4.Combined(组合pHash，SIFT，Histogram三种算法，以适应复杂情况，**理论上可以在合理运算时间下兼容有水印的情况**)
+
+
+
+<h2 id="jtNeL">软件使用以及图片耗时情况</h2>
+
+![](https://cdn.nlark.com/yuque/0/2025/png/40675728/1745588829654-4e359624-945d-4ba0-85a5-4ffcc840061e.png)
+
+100张图片，包括颜色调整，缩放，添加噪声变体
+
+**启动可执行文件:源文件目录/dist/main.exe**
+
+**控制面板选择算法调整阈值并点击开始检测得到结果**
+
+![](https://cdn.nlark.com/yuque/0/2025/png/40675728/1745590159838-94bd2624-0c0a-4813-8bf2-6a76ee07e599.png)
+
+
+
+测试时为vscode调试环境，CPU i7 9750h
+
+Phash算法耗时:6s
+
+![](https://cdn.nlark.com/yuque/0/2025/png/40675728/1745588952921-d5aa183b-f478-443d-9940-16e45fa044b6.png)
+
+
+
+直方图算法耗时：6.89s
+
+![](https://cdn.nlark.com/yuque/0/2025/png/40675728/1745588897133-7eab3e9f-d571-4ca4-a4f5-a1a8ceae0660.png)
+
+
+
+Sift算法耗时:540.50s
+
+![](https://cdn.nlark.com/yuque/0/2025/png/40675728/1745591268142-6cd0a956-7138-4cfe-976b-1f334b66ef9b.png)
+
+
+
+Conbined(组合加速算法)算法耗时:49.94
+
+![](https://cdn.nlark.com/yuque/0/2025/png/40675728/1745589469404-6a5ab359-a410-4d59-a0bc-a03b872795a7.png)
 
 
 
 <h2 id="RZdcs">已知Bug</h2>
 
 **1.非第一次导入图片会导致死锁**
-
-
-
-
 
 ****
 

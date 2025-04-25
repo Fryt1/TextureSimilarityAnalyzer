@@ -4,11 +4,14 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QPixmap
 
 import os
+
+
 class UIManager:
     def __init__(self, main_app, similarity_algorithm):
         self.main_app = main_app
         self.similarity_algorithm = similarity_algorithm
-        self.similarity_threshold = 0.98
+        self.similarity_threshold = 0.98 # 默认相似度阈值
+        self.start_time = None  # 用于记录检测开始时间
 
     def setup_preview_connection(self):
         self.main_app.ui.similarityList.itemClicked.connect(self.display_preview)

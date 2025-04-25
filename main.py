@@ -13,6 +13,7 @@ from UI.image_manager import ImageManager
 import os
 import shutil
 import sys
+import time  
 
 
 class MainApp(QMainWindow):
@@ -189,6 +190,9 @@ class MainApp(QMainWindow):
         self.progress_bar.setValue(0)       # 重置进度
         self.progress_bar.show()            # 必须显示控件
 
+        # 记录检测开始时间
+        self.start_time = time.time()
+
         # 创建异步任务
         algorithm = self.ui.algorithmComboBox.currentText().lower()
         try:
@@ -233,6 +237,13 @@ class MainApp(QMainWindow):
 
 
     def on_detection_complete(self, results):
+        
+        # 记录检测完成时间
+        end_time = time.time()
+        elapsed_time = end_time - self.start_time
+        print(f"检测耗时: {elapsed_time:.2f} 秒")
+
+
         self.data_lock.lock()
         try:
             self.group_data.clear()

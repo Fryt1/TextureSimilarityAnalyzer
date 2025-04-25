@@ -4,9 +4,11 @@ import os
 import sys
 import gc
 import random
+import time
 from collections import defaultdict
 from PyQt6.QtCore import QObject, pyqtSignal, QRunnable, QMutex, QMutexLocker
 from concurrent.futures import ThreadPoolExecutor
+
 
 class SimilaritySignals(QObject):
     progress_updated = pyqtSignal(int)
@@ -67,7 +69,7 @@ class SimilarityAlgorithms:
         # 阶段1：带进度的特征预计算
         for i, img_path in enumerate(images):
             try:
-                if progress_callback:
+                if progress_callback and i % 10 == 0:
                     progress = int((i / total) * 50)
                     progress_callback(progress)
 
@@ -480,7 +482,7 @@ class SimilarityAlgorithms:
                 print(f"图像加载失败: {img_path}")
                 return None 
             
-            sift = cv2.SIFT_create()
+            sift = cv2.SIFT_create(nfeatures=500)
             kp, des = sift.detectAndCompute(img, None)  # 显式接收两个返回值
             return (kp, des) if des is not None else None  # 返回元组或None
         except Exception as e:
@@ -498,7 +500,7 @@ class SimilarityAlgorithms:
         """SIFT相似度计算"""
         try:
             # 初始化SIFT检测器
-            sift = cv2.SIFT_create()
+            sift = cv2.SIFT_create(nfeatures=500)
             
             # 处理特征点描述符
             def get_features(img_path, kp_des):
@@ -522,7 +524,7 @@ class SimilarityAlgorithms:
             # FLANN匹配器参数配置
             FLANN_INDEX_KDTREE = 1
             index_params = dict(algorithm=FLANN_INDEX_KDTREE, trees=5)
-            search_params = dict(checks=50)
+            search_params = dict(checks=32)
             flann = cv2.FlannBasedMatcher(index_params, search_params)
 
             # KNN匹配与Lowe's测试
