@@ -10,12 +10,12 @@ class GroupManager:
         self.ui = ui
         self.group_data = group_data
         self.current_group = None
-        self.thread_pool = QThreadPool.globalInstance()  # 统一线程池管理
+        self.thread_pool = QThreadPool.globalInstance() 
 
 
 
     def show_group_menu(self, pos):
-        """显示分组右键菜单[6,7](@ref)"""
+        """显示分组右键菜单"""
         item = self.ui.groupTree.itemAt(pos)
         if not item:
             return
@@ -71,13 +71,13 @@ class GroupManager:
                 self.thread_pool.start(worker)
 
     def _update_thumbnail(self, item, pixmap):
-        """线程安全的缩略图更新"""
+        """缩略图更新"""
         if item and not pixmap.isNull():
             item.setIcon(0, QIcon(pixmap))
 
     def add_group(self, group_name, images):
         if group_name not in self.group_data:
-            with self.parent.data_lock:  # 使用数据锁
+            with self.parent.data_lock:  # 数据锁
                 self.group_data[group_name] = images
             self.init_group_tree()
 
@@ -93,7 +93,7 @@ class GroupManager:
         self._refresh_group_tree()
 
     def _refresh_group_tree(self):
-        """局部刷新替代完全重建"""
+        """局部刷新"""
         current_selected = self.ui.groupTree.currentItem()
         self.init_group_tree()
         if current_selected:
@@ -117,7 +117,6 @@ class GroupManager:
             })
             self.ui.similarityList.addItem(list_item)
 
-    # 其他方法保持原有逻辑，但需要添加数据锁保护
     def apply_similarity_grouping(self, threshold, similarity_algorithm):
         with self.parent.data_lock:
             all_images = [img for group in self.group_data.values() for img in group]

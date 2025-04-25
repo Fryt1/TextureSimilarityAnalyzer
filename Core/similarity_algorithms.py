@@ -55,7 +55,7 @@ class SimilarityAlgorithms:
         self.group_data = group_data
         self.add_group_callback = add_group_callback
         self.init_group_tree_callback = init_group_tree_callback
-        self.main_app = None  # 需在外部绑定MainApp实例
+        self.main_app = None  
         self.group_mutex = QMutex()  # 新增互斥锁
         self.cache_mutex = QMutex()
 
@@ -64,7 +64,7 @@ class SimilarityAlgorithms:
         feature_cache = {}
         valid_images = []
         
-        # 阶段1：带进度的特征预计算（0-50%）
+        # 阶段1：带进度的特征预计算
         for i, img_path in enumerate(images):
             try:
                 if progress_callback:
@@ -87,7 +87,7 @@ class SimilarityAlgorithms:
             except Exception as e:
                 print(f"特征计算失败 {img_path}: {str(e)}")
 
-        # 阶段2：带进度的分组计算（50-100%）
+        # 阶段2：带进度的分组计算
         groups = defaultdict(list)
         processed = set()
         for idx, img1 in enumerate(valid_images):
@@ -281,11 +281,10 @@ class SimilarityAlgorithms:
             return {str(k): [str(p) for p in v] for k, v in final_groups.items()}
 
 
-    # ================== 新增优化方法 ==================
     def _precompute_features_with_sift(self, img_path, feature_cache):
         with QMutexLocker(self.cache_mutex):  # 加锁操作
             try:
-                # 强制初始化字典结构
+                # 初始化字典结构
                 if img_path not in feature_cache:
                     feature_cache[img_path] = {'phash': None, 'hist': None, 'sift': None}
                 
@@ -295,7 +294,7 @@ class SimilarityAlgorithms:
                     hist_future = executor.submit(self._calc_histogram, img_path)
                     sift_future = executor.submit(self.sift_descriptor, img_path)
 
-                # 原子更新缓存
+            
                 feature_cache[img_path].update({
                     'phash': phash_future.result(),
                     'hist': hist_future.result(),
@@ -308,13 +307,8 @@ class SimilarityAlgorithms:
                 return img_path, {'phash': None, 'hist': None, 'sift': None}
 
     def _batch_cluster_similarity(self, cluster, candidates, feature_cache, threshold):
-        """批量候选相似度计算(修正版)
-        Args:
-            cluster: list, 基准图像路径列表 
-            candidates: list, 待比较图像路径列表
-            feature_cache: dict, 全局特征缓存 {img_path: features}
-            threshold: float, 相似度阈值
-        """
+        """批量候选相似度计算"""
+
         valid_candidates = []
         
         # 类型安全检查
@@ -371,7 +365,7 @@ class SimilarityAlgorithms:
         return valid_candidates
 
 
-    # 新增辅助方法
+
     def _precompute_features(self, img_path, progress_callback, total, index):
         try:
             if progress_callback:
@@ -451,9 +445,8 @@ class SimilarityAlgorithms:
         return total_sim / valid_comparisons if valid_comparisons > 0 else 0.0
 
 
-    # 以下是完整的工具方法（原特征计算方法保持不变）
     def pHash(self, image_path):
-        """改进的感知哈希算法"""
+        """感知哈希算法"""
         try:
             img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
             if img is None:
@@ -480,12 +473,12 @@ class SimilarityAlgorithms:
             return None
 
     def sift_descriptor(self, img_path):
-        """改进的SIFT描述符提取"""
+        """SIFT描述符提取"""
         try:
             img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
             if img is None:
                 print(f"图像加载失败: {img_path}")
-                return None  # 明确返回None
+                return None 
             
             sift = cv2.SIFT_create()
             kp, des = sift.detectAndCompute(img, None)  # 显式接收两个返回值
@@ -502,7 +495,7 @@ class SimilarityAlgorithms:
         return 1 - sum(c1 != c2 for c1, c2 in zip(hash1, hash2)) / len(hash1)
 
     def sift_similarity(self, img_a, img_b, kp_des_a=None, kp_des_b=None, ransac_threshold=8.0):
-        """增强的SIFT相似度计算，包含几何验证[7,8](@ref)"""
+        """SIFT相似度计算"""
         try:
             # 初始化SIFT检测器
             sift = cv2.SIFT_create()
@@ -526,31 +519,31 @@ class SimilarityAlgorithms:
             if des1 is None or des2 is None or len(des1) < 2 or len(des2) < 2:
                 return 0.0
 
-            # FLANN匹配器参数配置[4](@ref)
+            # FLANN匹配器参数配置
             FLANN_INDEX_KDTREE = 1
             index_params = dict(algorithm=FLANN_INDEX_KDTREE, trees=5)
             search_params = dict(checks=50)
             flann = cv2.FlannBasedMatcher(index_params, search_params)
 
-            # KNN匹配与Lowe's测试[2](@ref)
+            # KNN匹配与Lowe's测试
             matches = flann.knnMatch(des1, des2, k=2)
             good_matches = [m for m, n in matches if m.distance < 0.75 * n.distance]
 
-            # 几何验证核心逻辑[7,8](@ref)
+            # 几何验证核心逻辑
             if len(good_matches) > 4:
                 # 提取匹配点坐标
                 src_pts = np.float32([kp1[m.queryIdx].pt for m in good_matches]).reshape(-1,1,2)
                 dst_pts = np.float32([kp2[m.trainIdx].pt for m in good_matches]).reshape(-1,1,2)
                 
-                # 计算单应性矩阵(RANSAC方法)[6](@ref)
+                # 计算单应性矩阵(RANSAC方法)
                 M, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, ransac_threshold)
                 
                 if M is not None and mask is not None:
-                    # 计算内点比例[4](@ref)
+                    # 计算内点比例
                     inlier_ratio = np.sum(mask) / len(mask)
                     # 计算匹配点基础相似度
                     match_score = len(good_matches)/max(len(des1), len(des2))
-                    # 综合评分策略[7](@ref)
+                    # 综合评分策略
                     return 0.6 * match_score + 0.4 * inlier_ratio
                 else:
                     # 单应性计算失败时退回基础匹配

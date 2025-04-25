@@ -1,5 +1,5 @@
 from PyQt6.QtWidgets import QApplication, QMainWindow, QMessageBox, QFileDialog, QListWidgetItem
-from PyQt6.QtWidgets import QTreeWidgetItem, QMenu, QGraphicsScene  # 确保导入 QGraphicsScene
+from PyQt6.QtWidgets import QTreeWidgetItem, QMenu, QGraphicsScene  
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QPixmap
 
@@ -8,7 +8,7 @@ class UIManager:
     def __init__(self, main_app, similarity_algorithm):
         self.main_app = main_app
         self.similarity_algorithm = similarity_algorithm
-        self.similarity_threshold = 0.85
+        self.similarity_threshold = 0.98
 
     def setup_preview_connection(self):
         self.main_app.ui.similarityList.itemClicked.connect(self.display_preview)
@@ -54,4 +54,4 @@ class UIManager:
             images=all_images,
             threshold=self.similarity_threshold
         )
-        print("对比模式激活并完成分组")  # 移除多余文本
+        print("对比模式激活并完成分组")  

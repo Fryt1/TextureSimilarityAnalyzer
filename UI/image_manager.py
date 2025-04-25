@@ -2,7 +2,7 @@ from PyQt6.QtWidgets import QFileDialog, QMessageBox, QListWidgetItem
 from PyQt6.QtGui import QPixmap
 from PyQt6.QtWidgets import QMenu
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QInputDialog  # 确保导入 QInputDialog
+from PyQt6.QtWidgets import QInputDialog  
 
 import os
 import shutil
@@ -10,7 +10,7 @@ import shutil
 
 class ImageManager:
     def __init__(self, parent, group_data):
-        self.parent = parent  # 保存 MainApp 实例
+        self.parent = parent  
         self.group_data = group_data
 
 
@@ -48,7 +48,7 @@ class ImageManager:
     def import_images(self):
         """批量导入图片"""
         selected_files, _ = QFileDialog.getOpenFileNames(
-            self.parent,  # 使用 MainApp 实例作为 parent
+            self.parent,  
             "选择图片文件",
             "",
             "Images (*.png *.jpg *.jpeg *.bmp *.gif)"
@@ -83,26 +83,26 @@ class ImageManager:
                     QMessageBox.critical(self.parent, "错误", f"删除失败: {str(e)}")
                     return
             
-            # 批量更新分组数据（网页4）
+            # 批量更新分组数据
             for group in self.group_data.values():
                 group[:] = [p for p in group if p not in removed_paths]
             
-            # 批量删除列表项（网页7）
+            # 批量删除列表项
             for item in selected_items:
                 self.parent.ui.similarityList.takeItem(
                     self.parent.ui.similarityList.row(item)
                 )
     def batch_rename(self):
-        """批量模式化重命名（修复版）"""
+        """批量模式化重命名"""
         selected_items = self.parent.ui.similarityList.selectedItems()
         if not selected_items:
             return
         
-        # 获取命名模板
+        
         base_name, ok = QInputDialog.getText(
-            self.parent,  # 父窗口
-            "输入命名模板",  # 对话框标题
-            "请输入文件命名模板（使用 %d 表示序号）："  # 提示文本
+            self.parent,  
+            "输入命名模板",  
+            "请输入文件命名模板（使用 %d 表示序号）：" 
         )
         if not ok or not base_name:
             return
@@ -118,7 +118,7 @@ class ImageManager:
             
             try:
                 os.rename(old_path, new_path)
-                # 同时更新三个位置（关键修改点）
+                
                 item.setText(os.path.basename(new_path))  # 仅显示文件名 
                 item.setData(Qt.ItemDataRole.UserRole, {   # 更新存储路径
                     "path": new_path,
@@ -153,6 +153,6 @@ class ImageManager:
                 QMessageBox.critical(self.parent, "错误", f"移动失败: {str(e)}")
                 return
         
-        # 批量更新分组路径（网页4）
+        # 批量更新分组路径
         for old, new in moved_files:
             self.parent.group_manager.update_group_paths(old, new)

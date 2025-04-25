@@ -9,7 +9,7 @@ from UI.ui_manager import UIManager
 from UI.group_manager import GroupManager
 from Core.similarity_algorithms  import SimilarityWorker
 from Core.similarity_algorithms import SimilarityAlgorithms
-from UI.image_manager import ImageManager  # 引入新类
+from UI.image_manager import ImageManager  
 import os
 import shutil
 import sys
@@ -20,14 +20,14 @@ class MainApp(QMainWindow):
         self.data_lock = QMutex()  # 新增互斥锁
         super().__init__()
         self.ui = Ui_MainWindow()  # 实例化 UI 类
-        self.ui.setupUi(self)  # 绑定 UI 到主窗口
+        self.ui.setupUi(self)  
 
         # 初始化分组数据
         self.group_data = {"未分类": []}
 
         # 新增双阈值控制
-        self.coarse_threshold = 0.7  # 粗筛阈值默认值
-        self.fine_threshold = 0.6     # 细筛阈值默认值
+        self.coarse_threshold = 0.98  # 粗筛阈值默认值
+        self.fine_threshold = 0.3     # 细筛阈值默认值
 
         # 创建 GroupManager 实例
         self.group_manager = GroupManager(self, self.ui, self.group_data)
@@ -39,24 +39,25 @@ class MainApp(QMainWindow):
             self.group_manager.init_group_tree
         )
 
-        # 新增绑定 ↓↓↓
-        self.similarity_algorithm.main_app = self  # 注入主应用实例
+        # 新增绑定 
+        self.similarity_algorithm.main_app = self  
 
         # 创建 UIManager 实例，并传入 SimilarityAlgorithms
         self.ui_manager = UIManager(self, self.similarity_algorithm)
 
         # 创建 ImageManager 实例
-        self.image_manager = ImageManager(self, self.group_data)  # 传递 MainApp 实例作为父窗口
+        self.image_manager = ImageManager(self, self.group_data)  
 
         # 初始化界面
         self.init_ui()
 
 
     def init_ui(self):
+
         """初始化界面"""
         # 设置 similarityList 的右键菜单策略
         self.ui.similarityList.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        #self.ui.similarityList.customContextMenuRequested.connect(self.show_similarity_list_menu)
+
         
         self.ui.similarityList.setSelectionMode(
             QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection  # 允许Shift/Ctrl多选
@@ -76,12 +77,12 @@ class MainApp(QMainWindow):
 
         # 连接信号与槽
         self.ui.thresholdSlider.valueChanged.connect(self.ui_manager.update_threshold)
-        #self.ui.compareButton.clicked.connect(self.ui_manager.toggle_compare_mode)
-        self.ui.importButton.clicked.connect(self.image_manager.import_images)  # 调用 ImageManager 的方法
-        #self.ui.similarityList.itemClicked.connect(self.display_preview)
+        
+        self.ui.importButton.clicked.connect(self.image_manager.import_images)  
+
 
         self.ui_manager.setup_preview_connection()  # 绑定预览功能
-        self.image_manager.setup_context_menu()      # 绑定右键菜单
+        self.image_manager.setup_context_menu()     # 绑定右键菜单
 
         # 添加操作菜单
         # 新连接方式
@@ -102,7 +103,7 @@ class MainApp(QMainWindow):
 
         self.add_threshold_controls()
 
-                # 添加触发检测按钮
+        # 添加触发检测按钮
         self.ui.detectButton = QtWidgets.QPushButton("开始检测", self.ui.controlGroup)
         self.ui.verticalLayout_3.addWidget(self.ui.detectButton)
         self.ui.detectButton.clicked.connect(self.start_similarity_detection)
@@ -110,15 +111,15 @@ class MainApp(QMainWindow):
         # 监听算法选择变化
         self.ui.algorithmComboBox.currentIndexChanged.connect(self.on_algorithm_changed)
 
-            # 调用算法切换逻辑，确保初始化时显示正确的控件
+        # 调用算法切换逻辑，确保初始化时显示正确的控件
         self.on_algorithm_changed()
 
-        # 添加进度条控件（在init_ui方法中添加）
+        # 添加进度条控件
         self.progress_bar = QtWidgets.QProgressBar()
         self.ui.verticalLayout_3.addWidget(self.progress_bar)
         self.progress_bar.hide()
 
-        # 创建线程池（在类初始化部分添加）
+        # 创建线程池
         self.thread_pool = QThreadPool.globalInstance()
         self.running_task = None
 
@@ -149,12 +150,12 @@ class MainApp(QMainWindow):
 
 
     def add_threshold_controls(self):
-        """新增双阈值控制面板"""
+        """双阈值控制面板"""
         # 粗粒度阈值
         coarse_layout = QtWidgets.QHBoxLayout()
         self.coarseLabel = QtWidgets.QLabel(f"粗筛阈值: {self.coarse_threshold:.2f}")
         self.coarseSlider = QtWidgets.QSlider(Qt.Orientation.Horizontal)
-        self.coarseSlider.setRange(0, 100)  # 对应0.5-0.95
+        self.coarseSlider.setRange(0, 100)  
         self.coarseSlider.setValue(int(self.coarse_threshold*100))
         self.coarseSlider.valueChanged.connect(self.update_coarse_threshold)
         coarse_layout.addWidget(self.coarseLabel)
@@ -164,7 +165,7 @@ class MainApp(QMainWindow):
         fine_layout = QtWidgets.QHBoxLayout()
         self.fineLabel = QtWidgets.QLabel(f"细筛阈值: {self.fine_threshold:.2f}")
         self.fineSlider = QtWidgets.QSlider(Qt.Orientation.Horizontal)
-        self.fineSlider.setRange(0, 100)    # 对应0.3-0.8
+        self.fineSlider.setRange(0, 100)   
         self.fineSlider.setValue(int(self.fine_threshold*100))
         self.fineSlider.valueChanged.connect(self.update_fine_threshold)
         fine_layout.addWidget(self.fineLabel)
@@ -192,7 +193,7 @@ class MainApp(QMainWindow):
         algorithm = self.ui.algorithmComboBox.currentText().lower()
         try:
             # 获取图像数据时加锁保护
-            self.data_lock.lock()  # 手动加锁
+            self.data_lock.lock()  
             try:
                 all_images = self.get_all_images()
                 if not all_images:
