@@ -109,3 +109,45 @@ def _coarse_compare(self, base_features, target_features, threshold):
 
 **1.非第一次导入图片会导致死锁**
 
+
+
+
+
+****
+
+<h2 id="Lx4lA">Python环境</h2>
+
+| Package            | Version     |
+| ------------------ | ----------- |
+| Python             | 3.11.11     |
+| attrs              | 25.3.0      |
+| beautifulsoup4     | 4.13.4      |
+| certifi            | 2025.1.31   |
+| cffi               | 1.17.1      |
+| charset-normalizer | 3.4.1       |
+| h11                | 0.16.0      |
+| idna               | 3.10        |
+| numpy              | 2.2.4       |
+| opencv-python      | 4.11.0.86   |
+| outcome            | 1.3.0.post0 |
+| pillow             | 11.2.1      |
+| pip                | 25.0        |
+| pycparser          | 2.22        |
+| PyQt6              | 6.9.0       |
+| PyQt6-Qt6          | 6.9.0       |
+| PyQt6_sip          | 13.10.0     |
+| PySocks            | 1.7.1       |
+| requests           | 2.32.3      |
+| selenium           | 4.31.0      |
+| setuptools         | 75.8.0      |
+| sniffio            | 1.3.1       |
+| sortedcontainers   | 2.4.0       |
+| soupsieve          | 2.7         |
+| trio               | 0.30.0      |
+| trio-websocket     | 0.12.2      |
+| typing_extensions  | 4.13.2      |
+| urllib3            | 2.4.0       |
+| websocket-client   | 1.8.0       |
+| wheel              | 0.45.1      |
+| wsproto            | 1.2.0       |
+
