@@ -87,9 +87,9 @@ def _coarse_compare(self, base_features, target_features, threshold):
 
 <font style="color:rgb(0,0,0);">使用</font><font style="color:rgba(0, 0, 0, 0.9);background-color:rgb(243, 243, 243);">PyQt开发，拥有导入图片，检测相似性并分组，批量删除/改名/移动，切换PHash/Sift/直方图/combined算法的功能</font>
 
-![1745570826511-abbb4f7d-c244-4238-809d-250422211281](C:\Users\27648\Desktop\1745570826511-abbb4f7d-c244-4238-809d-250422211281.png)
+![](https://cdn.nlark.com/yuque/0/2025/png/40675728/1745570826511-abbb4f7d-c244-4238-809d-250422211281.png)
 
-![image (1)](C:\Users\27648\Downloads\image (1).png)
+![](https://cdn.nlark.com/yuque/0/2025/png/40675728/1745585001968-52cdb597-a1cf-4489-9337-82bd9b12c8e3.png)
 
 <h5 id="km3Di">TODO:1.手动调整匹配结果 </h5>
 
