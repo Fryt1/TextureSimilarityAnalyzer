@@ -1,4 +1,5 @@
 from PyQt6.QtWidgets import QApplication, QMainWindow, QFileDialog, QMessageBox, QListWidgetItem
+from PyQt6.QtCore import QObject, pyqtSignal, QRunnable, QThreadPool, QMutex
 from PyQt6.QtCore import Qt, QSize
 from PyQt6.QtGui import QPixmap, QIcon
 from PyQt6 import QtWidgets
@@ -6,6 +7,7 @@ from PyQt6.QtWidgets import QMenu
 from Ui_ImageTool import Ui_MainWindow
 from UI.ui_manager import UIManager
 from UI.group_manager import GroupManager
+from Core.similarity_algorithms  import SimilarityWorker
 from Core.similarity_algorithms import SimilarityAlgorithms
 from UI.image_manager import ImageManager  # 引入新类
 import os
@@ -15,6 +17,7 @@ import sys
 
 class MainApp(QMainWindow):
     def __init__(self):
+        self.data_lock = QMutex()  # 新增互斥锁
         super().__init__()
         self.ui = Ui_MainWindow()  # 实例化 UI 类
         self.ui.setupUi(self)  # 绑定 UI 到主窗口
@@ -35,6 +38,9 @@ class MainApp(QMainWindow):
             self.group_manager.add_group,
             self.group_manager.init_group_tree
         )
+
+        # 新增绑定 ↓↓↓
+        self.similarity_algorithm.main_app = self  # 注入主应用实例
 
         # 创建 UIManager 实例，并传入 SimilarityAlgorithms
         self.ui_manager = UIManager(self, self.similarity_algorithm)
@@ -90,7 +96,8 @@ class MainApp(QMainWindow):
         self.ui.algorithmComboBox.addItems(["pHash", "SIFT", "Histogram", "Combined"])
         self.ui.verticalLayout_3.insertWidget(0, self.ui.algorithmComboBox)
 
-
+        self.ui.groupTree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.ui.groupTree.customContextMenuRequested.connect(self.show_group_menu)
 
 
         self.add_threshold_controls()
@@ -105,6 +112,15 @@ class MainApp(QMainWindow):
 
             # 调用算法切换逻辑，确保初始化时显示正确的控件
         self.on_algorithm_changed()
+
+        # 添加进度条控件（在init_ui方法中添加）
+        self.progress_bar = QtWidgets.QProgressBar()
+        self.ui.verticalLayout_3.addWidget(self.progress_bar)
+        self.progress_bar.hide()
+
+        # 创建线程池（在类初始化部分添加）
+        self.thread_pool = QThreadPool.globalInstance()
+        self.running_task = None
 
 
 
@@ -138,7 +154,7 @@ class MainApp(QMainWindow):
         coarse_layout = QtWidgets.QHBoxLayout()
         self.coarseLabel = QtWidgets.QLabel(f"粗筛阈值: {self.coarse_threshold:.2f}")
         self.coarseSlider = QtWidgets.QSlider(Qt.Orientation.Horizontal)
-        self.coarseSlider.setRange(50, 95)  # 对应0.5-0.95
+        self.coarseSlider.setRange(0, 100)  # 对应0.5-0.95
         self.coarseSlider.setValue(int(self.coarse_threshold*100))
         self.coarseSlider.valueChanged.connect(self.update_coarse_threshold)
         coarse_layout.addWidget(self.coarseLabel)
@@ -148,7 +164,7 @@ class MainApp(QMainWindow):
         fine_layout = QtWidgets.QHBoxLayout()
         self.fineLabel = QtWidgets.QLabel(f"细筛阈值: {self.fine_threshold:.2f}")
         self.fineSlider = QtWidgets.QSlider(Qt.Orientation.Horizontal)
-        self.fineSlider.setRange(30, 80)    # 对应0.3-0.8
+        self.fineSlider.setRange(0, 100)    # 对应0.3-0.8
         self.fineSlider.setValue(int(self.fine_threshold*100))
         self.fineSlider.valueChanged.connect(self.update_fine_threshold)
         fine_layout.addWidget(self.fineLabel)
@@ -167,34 +183,99 @@ class MainApp(QMainWindow):
         self.fineLabel.setText(f"细筛阈值: {self.fine_threshold:.2f}")
 
     def start_similarity_detection(self):
+        # 添加进度条初始化逻辑
+        self.progress_bar.setRange(0, 100)  # 明确设置范围
+        self.progress_bar.setValue(0)       # 重置进度
+        self.progress_bar.show()            # 必须显示控件
+
+        # 创建异步任务
         algorithm = self.ui.algorithmComboBox.currentText().lower()
-        all_images = []
-        for group_name, images in self.group_data.items():
-            all_images.extend(images)
-        
-        # 根据算法类型调用不同检测方法
-        if algorithm == "combined":
-            # 两阶段检测模式
-            similarity_results = self.similarity_algorithm.apply_combined_grouping(
-                all_images,
+        try:
+            # 获取图像数据时加锁保护
+            self.data_lock.lock()  # 手动加锁
+            try:
+                all_images = self.get_all_images()
+                if not all_images:
+                    QMessageBox.warning(self, "警告", "没有可检测的图片")
+                    return
+            finally:
+                self.data_lock.unlock()  # 确保解锁
+
+            # 初始化任务
+            worker = SimilarityWorker(
+                algorithm=algorithm,
+                images=all_images,
                 coarse_threshold=self.coarse_threshold,
-                fine_threshold=self.fine_threshold
+                fine_threshold=self.fine_threshold,
+                similarity_algo=self.similarity_algorithm
             )
-        else:
-            # 单算法模式（保持原有逻辑）
-            similarity_results = self.similarity_algorithm.apply_single_algorithm_grouping(
-                all_images, 
-                threshold=self.ui_manager.similarity_threshold,
-                algorithm=algorithm
+
+            # 信号连接优化
+            worker.signals.progress_updated.connect(
+                lambda v: self.update_progress(v, algorithm)
             )
+            worker.signals.result_ready.connect(self.on_detection_complete)
+            worker.signals.error_occurred.connect(self.on_detection_error)
+            
+            # 任务状态管理
+            self.running_task = worker
+            self.thread_pool.start(worker)
+
+        except Exception as e:
+            self.progress_bar.hide()
+            QMessageBox.critical(self, "错误", f"任务启动失败: {str(e)}")
+
+
+    def update_progress(self, value, algorithm):
+        self.progress_bar.setValue(value)
+        print(f"当前算法: {algorithm}, 进度: {value}%")
+
+
+    def on_detection_complete(self, results):
+        self.data_lock.lock()
+        try:
+            self.group_data.clear()
+            self.group_data.update(results)
+            self.group_manager.init_group_tree()
+        finally:
+            self.data_lock.unlock()
         
-        # 统一更新分组数据
-        self.group_data.clear()
-        for group_name, images in similarity_results.items():
-            self.group_data[group_name] = images
-        
-        # 带缩略图刷新的分组树更新
-        self.group_manager.init_group_tree()
+        self.ui.detectButton.setEnabled(True)
+        self.progress_bar.hide()
+
+    def on_detection_error(self, message):
+        QMessageBox.critical(self, "错误", message)
+        self.ui.detectButton.setEnabled(True)
+        self.progress_bar.hide()
+
+    def get_all_images(self):
+        return [img for group in self.group_data.values() for img in group]
+    
+
+    def closeEvent(self, event):
+        if self.thread_pool.activeThreadCount() > 0:
+            self.thread_pool.clear()  # 终止所有未开始的任务
+            for worker in self.thread_pool.findChildren(QRunnable):
+                if isinstance(worker, SimilarityWorker):
+                    worker.cancel()
+        event.accept()
+
+
+
+    def show_group_menu(self, position):
+        """显示分组树的右键菜单"""
+        menu = QMenu(self)
+        menu.addAction("添加分组", self.add_group)
+        menu.addAction("删除分组", self.delete_group)
+        menu.exec(self.ui.groupTree.viewport().mapToGlobal(position))
+
+    def add_group(self):
+        """添加分组的逻辑"""
+        print("添加分组")
+
+    def delete_group(self):
+        """删除分组的逻辑"""
+        print("删除分组")
 
 
 

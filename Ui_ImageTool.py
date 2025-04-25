@@ -52,7 +52,7 @@ class Ui_MainWindow(object):
         self.thresholdLabel.setObjectName("thresholdLabel")
         self.verticalLayout_3.addWidget(self.thresholdLabel)
         self.thresholdSlider = QtWidgets.QSlider(parent=self.controlGroup)
-        self.thresholdSlider.setMinimum(50)
+        self.thresholdSlider.setMinimum(0)
         self.thresholdSlider.setMaximum(100)
         self.thresholdSlider.setProperty("value", 85)
         self.thresholdSlider.setOrientation(QtCore.Qt.Orientation.Horizontal)

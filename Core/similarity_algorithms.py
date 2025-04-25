@@ -1,318 +1,567 @@
-import random
 import cv2
 import numpy as np
 import os
+import sys
+import gc
+import random
 from collections import defaultdict
+from PyQt6.QtCore import QObject, pyqtSignal, QRunnable, QMutex, QMutexLocker
+from concurrent.futures import ThreadPoolExecutor
+
+class SimilaritySignals(QObject):
+    progress_updated = pyqtSignal(int)
+    result_ready = pyqtSignal(dict)
+    error_occurred = pyqtSignal(str)
+
+class SimilarityWorker(QRunnable):
+    def __init__(self, algorithm, images, coarse_threshold, fine_threshold, similarity_algo):
+        super().__init__()
+        self.algorithm = algorithm
+        self.images = images
+        self.coarse_threshold = coarse_threshold
+        self.fine_threshold = fine_threshold
+        self.similarity_algo = similarity_algo
+        self.signals = SimilaritySignals()
+        self._is_running = True
+
+    def run(self):
+        #try:
+        if self.algorithm == "combined":
+            results = self.similarity_algo.apply_combined_grouping(
+                self.images,
+                self.coarse_threshold,
+                self.fine_threshold,
+                progress_callback=self.signals.progress_updated.emit
+            )
+        else:
+            results = self.similarity_algo.apply_single_algorithm_grouping(
+                self.images,
+                threshold=self.similarity_algo.main_app.ui_manager.similarity_threshold,
+                algorithm=self.algorithm,
+                progress_callback=self.signals.progress_updated.emit
+            )
+            
+        if self._is_running:
+            self.signals.result_ready.emit(results)
+                
+        #except Exception as e:
+            #self.signals.error_occurred.emit(f"计算失败: {str(e)}")
+
+    def cancel(self):
+        self._is_running = False
 
 class SimilarityAlgorithms:
     def __init__(self, group_data, add_group_callback, init_group_tree_callback):
-        """
-        初始化 SimilarityAlgorithms 类。
-
-        :param group_data: 当前的分组数据（字典）
-        :param add_group_callback: 添加分组的回调函数
-        :param init_group_tree_callback: 刷新分组树的回调函数
-        """
         self.group_data = group_data
         self.add_group_callback = add_group_callback
         self.init_group_tree_callback = init_group_tree_callback
+        self.main_app = None  # 需在外部绑定MainApp实例
+        self.group_mutex = QMutex()  # 新增互斥锁
+        self.cache_mutex = QMutex()
 
-    @staticmethod
-    def load_image_with_chinese_path(img_path):
-        with open(img_path, 'rb') as f:
-            file_bytes = np.asarray(bytearray(f.read()), dtype=np.uint8)
-            img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
-        if img is None:
-            raise ValueError(f"图像加载失败，路径可能无效: {img_path}")
-        return img
-
-    def apply_single_algorithm_grouping(self, images, threshold=0.85, algorithm="phash"):
-
-        # 路径规范化与去重
-        images = [os.path.abspath(img) for img in images]
-        images = list({os.path.normcase(img) for img in images})
-        
-        # 预计算所有特征
+    def apply_single_algorithm_grouping(self, images, threshold=0.85, algorithm="phash", progress_callback=None):
+        total = len(images)
         feature_cache = {}
-        for img in images:
-            if algorithm == "phash":
-                feature_cache[img] = self.pHash(img)
-            elif algorithm == "histogram":
-                feature_cache[img] = self._calc_histogram(img)
-        print(f"特征缓存内容: {feature_cache}")  # 正确显示缓存内容
-        # 两两比对
-        groups = {}
-        grouped = set()
-        for i, img1 in enumerate(images):
-            if img1 in grouped: continue
+        valid_images = []
+        
+        # 阶段1：带进度的特征预计算（0-50%）
+        for i, img_path in enumerate(images):
+            try:
+                if progress_callback:
+                    progress = int((i / total) * 50)
+                    progress_callback(progress)
+
+                # 特征计算逻辑
+                if algorithm == "phash":
+                    feature = self.pHash(img_path)
+                elif algorithm == "histogram":
+                    feature = self._calc_histogram(img_path)
+                elif algorithm == "sift":
+                    feature = self.sift_descriptor(img_path)
+                else:
+                    raise ValueError(f"不支持的算法类型: {algorithm}")
+
+                if feature is not None:
+                    feature_cache[img_path] = feature
+                    valid_images.append(img_path)
+            except Exception as e:
+                print(f"特征计算失败 {img_path}: {str(e)}")
+
+        # 阶段2：带进度的分组计算（50-100%）
+        groups = defaultdict(list)
+        processed = set()
+        for idx, img1 in enumerate(valid_images):
+            if img1 in processed:
+                continue
             
             current_group = [img1]
-            for img2 in images[i+1:]:
+            processed.add(img1)
+            base_feature = feature_cache[img1]
+            
+            # 相似度比较
+            for img2 in valid_images[idx+1:]:
+                if img2 in processed:
+                    continue
+                
+                # 相似度计算
                 if algorithm == "phash":
-                    sim = self.pHash_similarity(feature_cache[img1], feature_cache[img2])
+                    sim = self.pHash_similarity(base_feature, feature_cache[img2])
                 elif algorithm == "histogram":
-                    sim = 1 - cv2.compareHist(feature_cache[img1], feature_cache[img2], 
-                                            cv2.HISTCMP_BHATTACHARYYA)
+                    sim = 1 - cv2.compareHist(base_feature, feature_cache[img2], cv2.HISTCMP_BHATTACHARYYA)
                 elif algorithm == "sift":
                     sim = self.sift_similarity(img1, img2)
-                else:  # combined
-                    sim = self.combined_similarity(img1, img2)
                 
                 if sim >= threshold:
                     current_group.append(img2)
-                    grouped.add(img2)
-            
-            # 创建动态分组名
-            base_name = os.path.basename(img1)
-            group_name = f"{algorithm}_{base_name[:10]}_group"
+                    processed.add(img2)
+
+            # 生成动态组名
+            group_name = f"{algorithm}_group_{len(groups)+1}"
             groups[group_name] = current_group
-        
+            
+            # 进度更新
+            if progress_callback:
+                progress = 50 + int(((idx + 1) / len(valid_images)) * 50)
+                progress_callback(progress)
+
         return groups
+    def apply_combined_grouping(self, images, coarse_threshold, fine_threshold, progress_callback=None):
+        with QMutexLocker(self.group_mutex):
+            total = len(images)
+            feature_cache = {}
+            valid_images = []
+            global_candidate_pool = set()
 
-    @staticmethod
-    def _calc_histogram(img_path):
-        """计算图像的直方图"""
-        try:
-            # 使用支持中文路径的加载方法
-            img = SimilarityAlgorithms.load_image_with_chinese_path(img_path)
-        except Exception as e:
-            raise ValueError(f"图像加载失败，路径可能无效: {img_path}") from e
+            max_workers = max(2, os.cpu_count() - 1)
+            feature_load_executor = ThreadPoolExecutor(max_workers=max_workers)
 
-        # 计算直方图逻辑（保持不变）
-        hist = cv2.calcHist([img], [0, 1, 2], None, [8, 8, 8], [0, 256, 0, 256, 0, 256])
-        return cv2.normalize(hist, hist).flatten()
+            # 阶段1：特征预计算
+            with feature_load_executor as executor:
+                sift_preload_futures = []
+                for i, img_path in enumerate(images):
+                    if progress_callback and i % 10 == 0:
+                        progress = int((i / total) * 30)
+                        progress_callback(progress)
+                    
+                    future = executor.submit(self._precompute_features_with_sift, img_path, feature_cache)
+                    sift_preload_futures.append(future)
+                
+                for future in sift_preload_futures:
+                    try:
+                        img_path, features = future.result()
+                        if not isinstance(features, dict):
+                            raise ValueError(f"Invalid features for {img_path}: {type(features)}")
+                        valid_images.append(img_path)
+                        global_candidate_pool.add(img_path)
+                    except Exception as e:
+                        print(f"特征预计算失败: {str(e)}")
 
-    def random_grouping(self, images, num_groups=5):
-            """
-            将图片随机分成指定数量的组。
+            # 内存管理
+            if sys.getsizeof(feature_cache) > 100 * 1024 * 1024:
+                for img in list(feature_cache.keys())[::2]:
+                    del feature_cache[img]
+                gc.collect()
 
-            :param images: 图片路径列表
-            :param num_groups: 分组数量，默认为 5
-            :return: 一个字典，键为组名，值为图片路径列表
-            """
-            import random
-            groups = {f"group_{i+1}": [] for i in range(num_groups)}
-            for image in images:
-                group_name = random.choice(list(groups.keys()))
-                groups[group_name].append(image)
-            return groups
+            final_groups = defaultdict(list)
+            processed = set()
+            recovery_threshold = fine_threshold * 0.8
+
+            # 阶段2：主处理流程
+            for idx, img1 in enumerate(valid_images):
+                if img1 in processed:
+                    continue
+
+                if progress_callback and idx % 5 == 0:
+                    current_progress = 30 + int((idx / len(valid_images)) * 60)
+                    progress_callback(current_progress)
+
+                temp_processed = {img1}
+                coarse_group = [img1]
+                base_features = feature_cache[img1]
+
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    futures = []
+                    batch_size = 50
+                    img_batch = []
+
+                    for img2 in valid_images[idx + 1:]:
+                        if img2 not in processed and img2 not in temp_processed:
+                            img_batch.append(img2)
+                            if len(img_batch) == batch_size:
+                                    futures.append(executor.submit(
+                                    self._batch_cluster_similarity,
+                                    base_features,                # cluster参数（基准特征）
+                                    img_batch,                    # candidates参数（图像路径列表）
+                                    feature_cache,               # 正确传入特征缓存字典
+                                    coarse_threshold             # 阈值参数
+                                ))
+                            img_batch = []
+
+                    if img_batch:
+                        futures.append(executor.submit(
+                            self._batch_cluster_similarity,
+                            base_features,                # cluster参数（基准特征）
+                            img_batch,                    # candidates参数（图像路径列表）
+                            feature_cache,               # 正确传入特征缓存字典
+                            coarse_threshold             # 阈值参数
+                        ))
+
+                    for future in futures:
+                        matched_imgs = future.result()
+                        coarse_group.extend(matched_imgs)
+                        temp_processed.update(matched_imgs)
+                        global_candidate_pool.difference_update(matched_imgs)
+
+                validation_matrix = defaultdict(set)
+                sift_features = {}
+
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    futures = {img: executor.submit(self._get_sift_features, img, feature_cache)
+                            for img in coarse_group}
+                    for img, future in futures.items():
+                        sift_features[img] = future.result()
+
+                ransac_threshold = 8.0
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    match_futures = []
+                    for i, img_a in enumerate(coarse_group):
+                        for img_b in coarse_group[i + 1:]:
+                            match_futures.append(executor.submit(
+                                self.sift_similarity,
+                                img_a, img_b,
+                                sift_features[img_a],
+                                sift_features[img_b],
+                                ransac_threshold
+                            ))
+
+                    for i, future in enumerate(match_futures):
+                        img_a, img_b = coarse_group[i // (len(coarse_group) - 1)], coarse_group[i % (len(coarse_group) - 1) + 1]
+                        sim = future.result()
+                        if sim >= fine_threshold:
+                            validation_matrix[img_a].add(img_b)
+                            validation_matrix[img_b].add(img_a)
+
+                max_cluster = self._find_max_cluster(coarse_group, validation_matrix)
+
+                if max_cluster:
+                    recovery_candidates = []
+                    candidate_group = list(global_candidate_pool - set(max_cluster))
+
+                    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                        batch_size = 20
+                        candidate_batches = [candidate_group[i:i + batch_size]
+                                            for i in range(0, len(candidate_group), batch_size)]
+
+                        futures = []
+                        for batch in candidate_batches:
+                            futures.append(executor.submit(
+                                self._batch_cluster_similarity,
+                                max_cluster,
+                                batch,
+                                feature_cache,
+                                recovery_threshold
+                            ))
+
+                        for future in futures:
+                            recovery_candidates.extend(future.result())
+
+                    if recovery_candidates:
+                        max_cluster.extend(recovery_candidates)
+                        processed.update(recovery_candidates)
+                        global_candidate_pool -= set(recovery_candidates)
+
+                    group_name = f"combined_group_{len(final_groups) + 1}"
+                    final_groups[group_name] = max_cluster
+                    processed.update(max_cluster)
+
+                if progress_callback and idx % 10 == 0:
+                    progress = 90 + int(((idx + 1) / len(valid_images)) * 10)
+                    progress_callback(progress)
+
+            return {str(k): [str(p) for p in v] for k, v in final_groups.items()}
+
+
+    # ================== 新增优化方法 ==================
+    def _precompute_features_with_sift(self, img_path, feature_cache):
+        with QMutexLocker(self.cache_mutex):  # 加锁操作
+            try:
+                # 强制初始化字典结构
+                if img_path not in feature_cache:
+                    feature_cache[img_path] = {'phash': None, 'hist': None, 'sift': None}
+                
+                # 并行加载特征
+                with ThreadPoolExecutor(max_workers=2) as executor:
+                    phash_future = executor.submit(self.pHash, img_path)
+                    hist_future = executor.submit(self._calc_histogram, img_path)
+                    sift_future = executor.submit(self.sift_descriptor, img_path)
+
+                # 原子更新缓存
+                feature_cache[img_path].update({
+                    'phash': phash_future.result(),
+                    'hist': hist_future.result(),
+                    'sift': sift_future.result()
+                })
+                return img_path, feature_cache[img_path]
+            except Exception as e:
+                print(f"特征预计算失败 {img_path}: {str(e)}")
+                # 确保返回结构一致性
+                return img_path, {'phash': None, 'hist': None, 'sift': None}
+
+    def _batch_cluster_similarity(self, cluster, candidates, feature_cache, threshold):
+        """批量候选相似度计算(修正版)
+        Args:
+            cluster: list, 基准图像路径列表 
+            candidates: list, 待比较图像路径列表
+            feature_cache: dict, 全局特征缓存 {img_path: features}
+            threshold: float, 相似度阈值
+        """
+        valid_candidates = []
         
-    
-    def pHash(self, image_path):
-        """改进的感知哈希算法，支持中文路径[1](@ref)"""
+        # 类型安全检查
+        if not isinstance(feature_cache, dict):
+            raise ValueError("feature_cache必须是字典类型")
+            
+        for candidate in candidates:
+            # 获取候选图像特征
+            candidate_features = feature_cache.get(candidate)
+            if not candidate_features or 'sift' not in candidate_features:
+                continue
+                
+            candidate_sift = candidate_features['sift']
+            total_sim = 0.0
+            valid_comparisons = 0
+            
+            # 随机采样基准图像(防止cluster过大)
+            sample_size = min(5, len(cluster))
+            sample_members = random.sample(cluster, sample_size) if len(cluster) > 5 else cluster
+            
+            for member_path in sample_members:
+                # 获取基准图像特征
+                member_features = feature_cache.get(member_path)
+                if not member_features or 'sift' not in member_features:
+                    continue
+                    
+                member_sift = member_features['sift']
+                
+                # 计算相似度
+                try:
+                    sim = self.sift_similarity(
+                        member_path, candidate,
+                        member_sift, candidate_sift
+                    )
+                except Exception as e:
+                    print(f"相似度计算失败 {member_path} vs {candidate}: {str(e)}")
+                    continue
+                
+                # 有效性检查
+                if sim > 0:
+                    total_sim += sim
+                    valid_comparisons += 1
+                    
+                    # 提前终止条件：低匹配概率
+                    if valid_comparisons >=3 and (total_sim/valid_comparisons) < (threshold*0.6):
+                        break
+            
+            # 判断是否满足阈值
+            if valid_comparisons > 0:
+                avg_sim = total_sim / valid_comparisons
+                if avg_sim >= threshold:
+                    valid_candidates.append(candidate)
+                    
+        return valid_candidates
+
+
+    # 新增辅助方法
+    def _precompute_features(self, img_path, progress_callback, total, index):
         try:
-            img = self._load_image(image_path)
+            if progress_callback:
+                progress = int((index / total) * 30)
+                progress_callback(progress)
+                
+            phash = self.pHash(img_path)
+            hist = self._calc_histogram(img_path)
+            return (img_path, {'phash': phash, 'hist': hist, 'sift': None})
+        except Exception as e:
+            raise RuntimeError(f"特征预计算失败 {img_path}: {str(e)}")
+        
+
+
+    def _coarse_compare(self, base_features, target_features, threshold):
+        phash_sim = self.pHash_similarity(base_features['phash'], target_features['phash'])
+        hist_sim = 1 - cv2.compareHist(base_features['hist'], target_features['hist'], cv2.HISTCMP_BHATTACHARYYA)
+        
+        # 阶段1：颜色特征验证
+        if(hist_sim<0.75):
+            return False
+        
+        # 阶段2：结构特征交叉验证
+        phash_weight = 0.6 if phash_sim > 0.85 else 0.4
+        combined_score = phash_weight * phash_sim + 0.6 * hist_sim
+            
+        return combined_score > threshold
+
+    def _get_sift_features(self, img_path, feature_cache):
+        features = feature_cache.get(img_path)
+        if not isinstance(features, dict):
+            print(f"警告: feature_cache[{img_path}] 的值不是字典，而是 {type(features)}")
+            # 确保返回一个默认的字典结构
+            features = {'phash': None, 'hist': None, 'sift': None}
+        return features.get('sift')
+
+    def _find_max_cluster(self, coarse_group, validation_matrix):
+        visited = set()
+        max_cluster = []
+        for img in coarse_group:
+            if img not in visited:
+                cluster = []
+                queue = [img]
+                while queue:
+                    node = queue.pop(0)
+                    if node not in visited:
+                        visited.add(node)
+                        cluster.append(node)
+                        queue.extend([n for n in validation_matrix[node] if n not in visited])
+                if len(cluster) > len(max_cluster):
+                    max_cluster = cluster
+        return max_cluster
+
+    def _calculate_cluster_similarity(self, cluster, candidate, feature_cache):
+        total_sim = 0.0
+        valid_comparisons = 0
+        
+        candidate_sift = self._get_sift_features(candidate, feature_cache)
+        if candidate_sift is None:
+            return 0.0
+
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            futures = []
+            for member in cluster:
+                member_sift = self._get_sift_features(member, feature_cache)
+                futures.append(executor.submit(
+                    self.sift_similarity, 
+                    member, candidate, member_sift, candidate_sift
+                ))
+            
+            for future in futures:
+                sim = future.result()
+                if sim > 0:
+                    total_sim += sim
+                    valid_comparisons += 1
+        
+        return total_sim / valid_comparisons if valid_comparisons > 0 else 0.0
+
+
+    # 以下是完整的工具方法（原特征计算方法保持不变）
+    def pHash(self, image_path):
+        """改进的感知哈希算法"""
+        try:
+            img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
             if img is None:
                 return None
                 
-            # 统一处理为灰度图
-            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-            resized = cv2.resize(gray, (32, 32), interpolation=cv2.INTER_AREA)
-            
-            # DCT变换和哈希生成
+            resized = cv2.resize(img, (32, 32), interpolation=cv2.INTER_AREA)
             dct = cv2.dct(np.float32(resized))
-            roi = dct[0:8, 0:8]
+            roi = dct[0:16, 0:16]  # 取低频区域
             avg = np.mean(roi)
-            hash_value = ''.join(['1' if x > avg else '0' for x in roi.flatten()])
-            print(f"Hash for {image_path}: {hash_value}")
-            return hash_value
+            return ''.join(['1' if x > avg else '0' for x in roi.flatten()])
         except Exception as e:
             print(f"pHash计算失败: {str(e)}")
             return None
 
-    @staticmethod
-    def pHash_similarity(hash1, hash2):
-        """汉明距离计算相似度[3](@ref)"""
-        if len(hash1) != len(hash2):
-            return 0.0
-        hamming = sum(c1 != c2 for c1, c2 in zip(hash1, hash2))
-        return 1 - hamming / len(hash1)
-    
-    @staticmethod
-    def _load_image(path):
-        """统一图像加载方法，支持中文路径[1,4](@ref)"""
+    def _calc_histogram(self, img_path, bins=(8, 8, 8)):
+        """计算HSV直方图"""
         try:
-            if not os.path.exists(path):
-                raise FileNotFoundError(f"文件不存在: {path}")
-            img_data = np.fromfile(path, dtype=np.uint8)
-            img = cv2.imdecode(img_data, cv2.IMREAD_COLOR)
-            if img is None:
-                raise ValueError(f"图像解码失败: {path}")
-            return img
+            img = cv2.imread(img_path)
+            hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+            hist = cv2.calcHist([hsv], [0, 1, 2], None, bins, [0, 180, 0, 256, 0, 256])
+            return cv2.normalize(hist, hist).flatten()
         except Exception as e:
-            print(f"图像加载失败: {str(e)}")
+            print(f"直方图计算失败: {str(e)}")
             return None
 
-    def histogram_similarity(self, img1_path, img2_path):
-        """优化后的颜色直方图相似度计算[1,3,4](@ref)"""
+    def sift_descriptor(self, img_path):
+        """改进的SIFT描述符提取"""
         try:
-            img1 = self._load_image(img1_path)
-            img2 = self._load_image(img2_path)
-            if img1 is None or img2 is None:
-                return 1.0  # 返回最大差异值
-
-            # 转换到HSV颜色空间[4](@ref)
-            img1_hsv = cv2.cvtColor(img1, cv2.COLOR_BGR2HSV)
-            img2_hsv = cv2.cvtColor(img2, cv2.COLOR_BGR2HSV)
-
-            # 计算2D直方图（H和S通道）[3](@ref)
-            hist1 = cv2.calcHist([img1_hsv], [0, 1], None, 
-                               [180, 256], [0, 180, 0, 256])
-            hist2 = cv2.calcHist([img2_hsv], [0, 1], None,
-                               [180, 256], [0, 180, 0, 256])
-
-            # 归一化处理[5](@ref)
-            cv2.normalize(hist1, hist1, 0, 1, cv2.NORM_MINMAX)
-            cv2.normalize(hist2, hist2, 0, 1, cv2.NORM_MINMAX)
+            img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
+            if img is None:
+                print(f"图像加载失败: {img_path}")
+                return None  # 明确返回None
             
-            # 使用巴氏距离比较直方图[4](@ref)
-            return cv2.compareHist(hist1, hist2, cv2.HISTCMP_BHATTACHARYYA)
-        except Exception as e:
-            print(f"直方图计算异常: {str(e)}")
-            return 1.0  # 默认返回最大差异值
-    
-    @staticmethod
-    def sift_similarity(img1_path, img2_path):
-        """SIFT特征匹配算法"""
-        try:
-            # 使用支持中文路径的加载方法
-            img1 = SimilarityAlgorithms.load_image_with_chinese_path(img1_path)
-            img2 = SimilarityAlgorithms.load_image_with_chinese_path(img2_path)
-
-            # 检查图像是否加载成功
-            if img1 is None or img2 is None:
-                return 0.0  # 返回默认相似度
-
-            # 特征检测
             sift = cv2.SIFT_create()
-            kp1, des1 = sift.detectAndCompute(img1, None)
-            kp2, des2 = sift.detectAndCompute(img2, None)
+            kp, des = sift.detectAndCompute(img, None)  # 显式接收两个返回值
+            return (kp, des) if des is not None else None  # 返回元组或None
+        except Exception as e:
+            print(f"SIFT特征提取失败: {str(e)}")
+            return None
 
-            if des1 is None or des2 is None:
-                return 0.0  # 如果无法提取特征，返回默认相似度
+    @staticmethod
+    def pHash_similarity(hash1, hash2):
+        """汉明距离计算相似度"""
+        if len(hash1) != len(hash2):
+            return 0.0
+        return 1 - sum(c1 != c2 for c1, c2 in zip(hash1, hash2)) / len(hash1)
 
-            # 特征匹配
+    def sift_similarity(self, img_a, img_b, kp_des_a=None, kp_des_b=None, ransac_threshold=8.0):
+        """增强的SIFT相似度计算，包含几何验证[7,8](@ref)"""
+        try:
+            # 初始化SIFT检测器
+            sift = cv2.SIFT_create()
+            
+            # 处理特征点描述符
+            def get_features(img_path, kp_des):
+                if kp_des is None:
+                    img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
+                    if img is None:
+                        raise ValueError(f"无法加载图像: {img_path}")
+                    kp, des = sift.detectAndCompute(img, None)
+                else:
+                    kp, des = kp_des
+                return kp, des
+
+            # 获取关键点和描述符
+            kp1, des1 = get_features(img_a, kp_des_a)
+            kp2, des2 = get_features(img_b, kp_des_b)
+
+            # 描述符有效性检查
+            if des1 is None or des2 is None or len(des1) < 2 or len(des2) < 2:
+                return 0.0
+
+            # FLANN匹配器参数配置[4](@ref)
             FLANN_INDEX_KDTREE = 1
             index_params = dict(algorithm=FLANN_INDEX_KDTREE, trees=5)
             search_params = dict(checks=50)
             flann = cv2.FlannBasedMatcher(index_params, search_params)
 
+            # KNN匹配与Lowe's测试[2](@ref)
             matches = flann.knnMatch(des1, des2, k=2)
+            good_matches = [m for m, n in matches if m.distance < 0.75 * n.distance]
 
-            # Lowe's比率测试
-            good = []
-            for m, n in matches:
-                if m.distance < 0.75 * n.distance:
-                    good.append(m)
-
-            # 相似度计算
-            similarity = len(good) / max(len(kp1), len(kp2))
-            return float(similarity)  # 确保返回值为浮点数
-        except Exception as e:
-            print(f"SIFT相似度计算失败: {str(e)}")
-            return 0.0  # 异常时返回默认相似度
-    
-
-    def apply_combined_grouping(self, images, 
-                                coarse_threshold=0.7,
-                                fine_threshold=0.6):
-        """两阶段相似度分组算法"""
-        coarse_threshold = float(coarse_threshold)
-        fine_threshold = float(fine_threshold)
-
-        # 特征预计算
-        feature_cache = {
-            img: {
-                'phash': self.pHash(img),
-                'hist': self._calc_histogram(img)
-            } for img in images if os.path.exists(img)
-        }
-
-        # 初始化分组结果和已分组集合
-        final_groups = {}
-        grouped = set()
-
-        # 遍历所有图片
-        for img1 in images:
-            if img1 in grouped or img1 not in feature_cache:
-                continue
-
-            # 当前组初始化
-            current_group = set([img1])
-            queue = [img1]  # 使用队列进行递归检查
-
-            while queue:
-                base_img = queue.pop(0)
-                for img2 in images:
-                    if img2 in grouped or img2 not in feature_cache or img2 == base_img:
-                        continue
-
-                    # 计算相似度
-                    phash_sim = self.pHash_similarity(
-                        feature_cache[base_img]['phash'],
-                        feature_cache[img2]['phash']
-                    )
-                    hist_sim = 1 - cv2.compareHist(
-                        feature_cache[base_img]['hist'],
-                        feature_cache[img2]['hist'],
-                        cv2.HISTCMP_BHATTACHARYYA
-                    )
-                    combined_sim = 0.6 * phash_sim + 0.4 * hist_sim
-
-                    if combined_sim >= coarse_threshold:
-                        current_group.add(img2)
-                        queue.append(img2)
-                        grouped.add(img2)
-
-            # 第二阶段：细粒度验证
-            valid_group = []
-            for img in current_group:
-                if all(self.sift_similarity(img, other) >= fine_threshold for other in current_group if img != other):
-                    valid_group.append(img)
-
-            # 如果细粒度验证失败，将图片单独分组
-            if not valid_group:
-                for img in current_group:
-                    group_name = f"single_{os.path.basename(img)[:6]}_group"
-                    final_groups[group_name] = [img]
-                    grouped.add(img)
+            # 几何验证核心逻辑[7,8](@ref)
+            if len(good_matches) > 4:
+                # 提取匹配点坐标
+                src_pts = np.float32([kp1[m.queryIdx].pt for m in good_matches]).reshape(-1,1,2)
+                dst_pts = np.float32([kp2[m.trainIdx].pt for m in good_matches]).reshape(-1,1,2)
+                
+                # 计算单应性矩阵(RANSAC方法)[6](@ref)
+                M, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, ransac_threshold)
+                
+                if M is not None and mask is not None:
+                    # 计算内点比例[4](@ref)
+                    inlier_ratio = np.sum(mask) / len(mask)
+                    # 计算匹配点基础相似度
+                    match_score = len(good_matches)/max(len(des1), len(des2))
+                    # 综合评分策略[7](@ref)
+                    return 0.6 * match_score + 0.4 * inlier_ratio
+                else:
+                    # 单应性计算失败时退回基础匹配
+                    return len(good_matches)/max(len(des1), len(des2))
             else:
-                # 添加到最终分组
-                group_name = f"group_{len(final_groups) + 1}"
-                final_groups[group_name] = valid_group
-                grouped.update(valid_group)
+                # 匹配点不足时返回基础分
+                return len(good_matches)/max(len(des1), len(des2))
 
-        # 处理未分组的图片
-        ungrouped_images = [img for img in images if img not in grouped]
-        for img in ungrouped_images:
-            group_name = f"single_{os.path.basename(img)[:6]}_group"
-            final_groups[group_name] = [img]
-
-        return final_groups
-
-    def combined_similarity(self, img1_path, img2_path, 
-                            coarse_threshold=0.7, 
-                            fine_threshold=0.6,
-                            weights=(0.6, 0.4)):
-        """两阶段混合相似度检测算法"""
-        try:
-            # 第一阶段：粗粒度筛选（pHash + 直方图）
-            hash1 = self.pHash(img1_path)
-            hash2 = self.pHash(img2_path)
-            phash_sim = self.pHash_similarity(hash1, hash2) if hash1 and hash2 else 0
-            
-            hist_sim = 1 - self.histogram_similarity(img1_path, img2_path)  # 转换为相似度
-            
-            # 加权计算粗粒度相似度 [1,3](@ref)
-            coarse_sim = weights[0]*phash_sim + weights[1]*hist_sim
-            
-            if coarse_sim < coarse_threshold:
-                return 0.0  # 未通过粗筛直接返回
-            
-            # 第二阶段：细粒度验证（SIFT）
-            sift_sim = self.sift_similarity(img1_path, img2_path)
-            return sift_sim if sift_sim >= fine_threshold else 0.0
-
+        except cv2.error as e:
+            print(f"OpenCV错误: {str(e)}")
+            return 0.0
         except Exception as e:
-            print(f"混合算法异常: {str(e)}")
+            print(f"计算异常: {str(e)}")
             return 0.0
